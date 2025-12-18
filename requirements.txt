@@ -1,0 +1,1 @@
+FlaskFlask-SQLAlchemyFlask-BcryptPyJWTpython-dateutilFlask-CORS
