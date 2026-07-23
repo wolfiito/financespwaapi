@@ -9,6 +9,7 @@ from dateutil.relativedelta import relativedelta
 from decimal import Decimal
 from sqlalchemy import or_, and_, func
 from api.security import token_required
+from services.recurring import next_execution_date
 
 projection_bp = Blueprint('projection_bp', __name__, url_prefix='/api/projection')
 
@@ -67,7 +68,9 @@ def get_projection(current_user):
 
     # ¡CAMBIO! Cargamos TODAS las reglas, incluyendo las de deudas (ya no filtramos por debt_id == None).
     rules_db = RecurringRule.query.filter(
-        RecurringRule.user_id == current_user.id
+        RecurringRule.user_id == current_user.id,
+        RecurringRule.is_active.is_(True),
+        RecurringRule.next_execution_date <= end_date,
     ).all()
 
     # ¡CAMBIO! Hacemos copias Y asignamos las reglas sin cuenta a la "Cuenta Maestra".
@@ -81,7 +84,8 @@ def get_projection(current_user):
             "description": rule.description,
             "amount": rule.amount,
             "frequency": rule.frequency,
-            "next_execution_date": rule.next_execution_date,
+            "next_execution_date": max(rule.next_execution_date, rule.start_date or rule.next_execution_date),
+            "end_date": rule.end_date,
             "account_id": account_id_to_use # Usamos la cuenta (real o la maestra)
         })
 
@@ -94,14 +98,16 @@ def get_projection(current_user):
 
     while current_date <= end_date:
         for rule in rules_to_simulate:
-            if rule['next_execution_date'] == current_date:
+            if rule['next_execution_date'] == current_date and (
+                not rule['end_date'] or current_date <= rule['end_date']
+            ):
                 simulation_log.append({
                     "date": current_date,
                     "description": rule['description'],
                     "amount": rule['amount'],
                     "account_id": rule['account_id']
                 })
-                rule['next_execution_date'] = get_next_date(current_date, rule['frequency'].value)
+                rule['next_execution_date'] = next_execution_date(current_date, rule['frequency'])
         current_date += timedelta(days=1)
 
     # --- 4. Motor de Simulación (FASE B: Pagos de TC) (¡MODIFICADO!) ---
@@ -163,12 +169,10 @@ def get_projection(current_user):
     for entry in final_log:
         amount = entry['amount']
 
-        # --- ¡CAMBIO CLAVE! ---
-        # Ya no filtramos por 'real_money_account_ids'.
-        # TODO evento (ingreso, gasto fijo, gasto de TC, pago de TC)
-        # ahora afecta la línea de tiempo del balance de dinero real.
-        projected_real_money_balance += amount
-        # --- FIN DEL CAMBIO ---
+        # Un gasto cargado a tarjeta no descuenta efectivo todavía; lo hará el
+        # evento de pago de la tarjeta. De este modo no se cuenta dos veces.
+        if entry['account_id'] in real_money_account_ids:
+            projected_real_money_balance += amount
 
         processed_log_for_client.append({
             "date": entry['date'].isoformat(),
@@ -202,20 +206,6 @@ def rule_to_dict(rule):
         "type": rule.type.value,
         "next_execution_date": rule.next_execution_date
     }
-
-def get_next_date(current_exec_date, frequency_str):
-    """
-    Calcula la siguiente fecha basándose en el string de frecuencia
-    """
-    if frequency_str == FrequencyType.MONTHLY.value:
-        return current_exec_date + relativedelta(months=1)
-    elif frequency_str == FrequencyType.WEEKLY.value:
-        return current_exec_date + relativedelta(weeks=1)
-    elif frequency_str == FrequencyType.DAILY.value:
-        return current_exec_date + relativedelta(days=1)
-    elif frequency_str == FrequencyType.YEARLY.value:
-        return current_exec_date + relativedelta(years=1)
-    return date.max
 
 def get_next_payment_date(payment_day: int, today: date = None) -> date:
     """

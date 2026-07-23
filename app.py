@@ -1,6 +1,8 @@
 # En: app.py
 
 import os
+import click
+from datetime import date
 from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
@@ -48,6 +50,20 @@ app.register_blueprint(account_bp)
 
 from api.summary_routes import summary_bp
 app.register_blueprint(summary_bp)
+
+
+@app.cli.command('process-rules')
+@click.option('--until', 'until_value', default=None, help='Fecha límite YYYY-MM-DD; por defecto, hoy.')
+def process_rules_command(until_value):
+    """Materializa las reglas recurrentes pendientes sin duplicarlas."""
+    from services.recurring import process_due_rules
+
+    try:
+        until = date.fromisoformat(until_value) if until_value else date.today()
+    except ValueError as error:
+        raise click.BadParameter('Debe tener formato YYYY-MM-DD.') from error
+    created = process_due_rules(until=until)
+    click.echo(f'{created} movimiento(s) recurrente(s) creado(s) hasta {until.isoformat()}.')
 
 # --- Rutas de Prueba ---
 @app.route('/')

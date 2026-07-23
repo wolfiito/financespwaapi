@@ -145,3 +145,58 @@ def get_account_transactions(current_user, account_id):
 
     except Exception as e:
         return jsonify({"error": f"Error interno: {str(e)}"}), 500
+
+
+@account_bp.route('/<int:account_id>', methods=['PATCH'])
+@token_required
+def update_account(current_user, account_id):
+    """Edita una cuenta propia sin alterar sus movimientos históricos."""
+    account = Account.query.filter_by(id=account_id, user_id=current_user.id).first()
+    if not account:
+        return jsonify({'error': 'Cuenta no encontrada'}), 404
+    data = request.get_json(silent=True) or {}
+    try:
+        if 'name' in data:
+            if not isinstance(data['name'], str) or not data['name'].strip():
+                return jsonify({'error': 'name no puede estar vacío'}), 400
+            account.name = data['name'].strip()
+        if 'type' in data:
+            account.type = AccountType(data['type'])
+        for field in ('closing_date', 'payment_date'):
+            if field in data:
+                value = data[field]
+                if value is not None and (not isinstance(value, int) or not 1 <= value <= 31):
+                    return jsonify({'error': f'{field} debe ser un día entre 1 y 31'}), 400
+                setattr(account, field, value)
+        db.session.commit()
+        return jsonify(account_to_dict(account)), 200
+    except ValueError:
+        db.session.rollback()
+        return jsonify({'error': 'Tipo de cuenta no válido'}), 400
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'No se pudo actualizar la cuenta'}), 500
+
+
+@account_bp.route('/<int:account_id>', methods=['DELETE'])
+@token_required
+def delete_account(current_user, account_id):
+    """Elimina una cuenta vacía; conserva la integridad del historial."""
+    account = Account.query.filter_by(id=account_id, user_id=current_user.id).first()
+    if not account:
+        return jsonify({'error': 'Cuenta no encontrada'}), 404
+    if account.transactions or account.recurring_rules:
+        return jsonify({'error': 'La cuenta tiene movimientos o reglas; reasígnalos antes de eliminarla.'}), 409
+    db.session.delete(account)
+    db.session.commit()
+    return jsonify({'message': 'Cuenta eliminada exitosamente'}), 200
+
+
+def account_to_dict(account):
+    return {
+        'id': account.id,
+        'name': account.name,
+        'type': account.type.value,
+        'closing_date': account.closing_date,
+        'payment_date': account.payment_date,
+    }

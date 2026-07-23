@@ -27,7 +27,7 @@ def create_debt(current_user):
             payment_frequency_str = data['frequency']
             payment_frequency = FrequencyType(payment_frequency_str)
         except (KeyError, ValueError):
-            return jsonify({"error": f"Frecuencia no válida o faltante: {payment_frequency_str}"}), 400
+            return jsonify({"error": "Frecuencia no válida o faltante"}), 400
 
         # 2. Crear el 'Debt'
         new_debt = Debt(
@@ -57,6 +57,9 @@ def create_debt(current_user):
             # --- FIN CAMBIOS ---
 
             next_execution_date=next_payment,
+            start_date=next_payment,
+            end_date=None,
+            is_active=True,
             user_id=current_user.id,
             associated_debt=new_debt # Vinculamos la regla a la deuda
         )
@@ -109,3 +112,63 @@ def get_debts(current_user):
 
     except Exception as e:
         return jsonify({"error": f"Error interno: {str(e)}"}), 500
+
+
+@debt_bp.route('/<int:debt_id>', methods=['PATCH'])
+@token_required
+def update_debt(current_user, debt_id):
+    debt = Debt.query.filter_by(id=debt_id, user_id=current_user.id).first()
+    if not debt:
+        return jsonify({'error': 'Deuda no encontrada'}), 404
+    data = request.get_json(silent=True) or {}
+    try:
+        for field in ('debt_name',):
+            if field in data:
+                if not isinstance(data[field], str) or not data[field].strip():
+                    return jsonify({'error': f'{field} no puede estar vacío'}), 400
+                setattr(debt, field, data[field].strip())
+        for field in ('original_amount', 'monthly_payment_amount'):
+            if field in data:
+                value = Decimal(str(data[field]))
+                if value <= 0:
+                    return jsonify({'error': f'{field} debe ser mayor que cero'}), 400
+                setattr(debt, field, value)
+        if 'term_months' in data:
+            if not isinstance(data['term_months'], int) or data['term_months'] <= 0:
+                return jsonify({'error': 'term_months debe ser un entero positivo'}), 400
+            debt.term_months = data['term_months']
+        db.session.commit()
+        return jsonify(debt_to_dict(debt)), 200
+    except (ValueError, ArithmeticError):
+        db.session.rollback()
+        return jsonify({'error': 'Los montos deben ser numéricos'}), 400
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'No se pudo actualizar la deuda'}), 500
+
+
+@debt_bp.route('/<int:debt_id>', methods=['DELETE'])
+@token_required
+def delete_debt(current_user, debt_id):
+    debt = Debt.query.filter_by(id=debt_id, user_id=current_user.id).first()
+    if not debt:
+        return jsonify({'error': 'Deuda no encontrada'}), 404
+    if debt.payments.count():
+        return jsonify({'error': 'La deuda tiene pagos registrados; no se puede eliminar.'}), 409
+    if debt.associated_rule:
+        db.session.delete(debt.associated_rule)
+    db.session.delete(debt)
+    db.session.commit()
+    return jsonify({'message': 'Deuda eliminada exitosamente'}), 200
+
+
+def debt_to_dict(debt):
+    return {
+        'debt_id': debt.id,
+        'debt_name': debt.debt_name,
+        'original_amount': str(debt.original_amount),
+        'monthly_payment_amount': str(debt.monthly_payment_amount),
+        'term_months': debt.term_months,
+        'total_paid': str(debt.total_paid),
+        'remaining_amount': str(debt.remaining_amount),
+    }

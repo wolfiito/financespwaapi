@@ -94,6 +94,7 @@ class Transaction(db.Model):
     # --- NUEVO CAMPO (Ajuste #1) ---
     # Vincula esta transacción al pago de una deuda
     debt_id = db.Column(db.Integer, db.ForeignKey('debt.id'), nullable=True)
+    recurring_execution = db.relationship('RecurringExecution', backref='transaction', uselist=False)
 
 # --- 4. MODELO DEBT (Refactorizado) ---
 
@@ -144,7 +145,34 @@ class RecurringRule(db.Model):
     type = db.Column(db.Enum(RecurringRuleType), nullable=False)
     frequency = db.Column(db.Enum(FrequencyType), nullable=False)
     next_execution_date = db.Column(db.Date, nullable=False)
+    # Fecha de inicio del calendario y fecha final opcional.  La próxima
+    # ejecución se conserva para poder procesar una regla de forma incremental.
+    start_date = db.Column(db.Date, nullable=True)
+    end_date = db.Column(db.Date, nullable=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    category = db.Column(db.String(50), nullable=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     debt_id = db.Column(db.Integer, db.ForeignKey('debt.id'), nullable=True)
     account_id = db.Column(db.Integer, db.ForeignKey('account.id'), nullable=True)
     account = db.relationship('Account', backref='recurring_rules')
+
+
+class RecurringExecution(db.Model):
+    """Una ocurrencia ya materializada de una regla recurrente.
+
+    La restricción única hace idempotente al proceso diario: aunque se ejecute
+    dos veces, una misma regla no puede crear dos movimientos para la misma
+    fecha programada.
+    """
+    __tablename__ = 'recurring_execution'
+    __table_args__ = (
+        db.UniqueConstraint('rule_id', 'scheduled_date', name='uq_rule_scheduled_date'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    rule_id = db.Column(db.Integer, db.ForeignKey('recurring_rule.id'), nullable=False)
+    transaction_id = db.Column(db.Integer, db.ForeignKey('transaction.id'), nullable=False)
+    scheduled_date = db.Column(db.Date, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    rule = db.relationship('RecurringRule', backref=db.backref('executions', lazy='dynamic'))

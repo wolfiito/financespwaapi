@@ -22,6 +22,14 @@ def get_category_summary(current_user):
     ¡CAMBIO! Usa Enums.
     """
     try:
+        date_from = request.args.get('date_from')
+        date_to = request.args.get('date_to')
+        try:
+            parsed_from = date.fromisoformat(date_from) if date_from else None
+            parsed_to = date.fromisoformat(date_to) if date_to else None
+        except ValueError:
+            return jsonify({'error': 'date_from y date_to deben tener formato YYYY-MM-DD'}), 400
+
         summary_query = db.session.query(
             Transaction.category,
             func.sum(Transaction.amount).label('total_amount')
@@ -29,7 +37,12 @@ def get_category_summary(current_user):
             Transaction.user_id == current_user.id,
             # ¡CORREGIDO! Usamos el Enum
             Transaction.type == TransactionType.EXPENSE
-        ).group_by(
+        )
+        if parsed_from:
+            summary_query = summary_query.filter(func.date(Transaction.date) >= parsed_from)
+        if parsed_to:
+            summary_query = summary_query.filter(func.date(Transaction.date) <= parsed_to)
+        summary_query = summary_query.group_by(
             Transaction.category
         ).all()
 

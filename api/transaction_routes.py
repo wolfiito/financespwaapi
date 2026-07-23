@@ -3,8 +3,8 @@
 from flask import Blueprint, jsonify, request
 from app import db
 # ¡CAMBIO! Importamos TODOS los modelos y Enums que necesitamos
-from models import Transaction, Account, AccountType, TransactionType
-from datetime import datetime
+from models import Transaction, Account, Debt, AccountType, TransactionType
+from datetime import date, datetime
 from decimal import Decimal
 from api.security import token_required
 # ¡CAMBIO! Importamos 'func' para la lógica de fechas
@@ -55,7 +55,7 @@ def create_transaction(current_user):
     Registra una transacción (gasto, ingreso, MSI, o pago de deuda).
     ¡Este es el endpoint más importante!
     """
-    data = request.json
+    data = request.get_json(silent=True) or {}
     try:
         amount = Decimal(data['amount'])
         
@@ -79,10 +79,18 @@ def create_transaction(current_user):
             # Si no hay cuenta, es dinero real. Usamos la "Cuenta Maestra" (CASH)
             main_account = get_or_create_main_account(current_user.id)
             account_id = main_account.id
+        else:
+            account = Account.query.filter_by(id=account_id, user_id=current_user.id).first()
+            if not account:
+                return jsonify({'error': 'La cuenta no existe o no pertenece al usuario'}), 400
 
         # ¡CAMBIO! Leemos los campos del refactor
         installments = data.get('installments', 1) # Default 1 (pago normal)
+        if not isinstance(installments, int) or installments < 1:
+            return jsonify({'error': 'installments debe ser un entero mayor o igual a 1'}), 400
         debt_id = data.get('debt_id', None) # Default null
+        if debt_id is not None and not Debt.query.filter_by(id=debt_id, user_id=current_user.id).first():
+            return jsonify({'error': 'La deuda no existe o no pertenece al usuario'}), 400
 
         new_trans = Transaction(
             description=data['description'],
@@ -128,20 +136,38 @@ def get_transactions(current_user):
     ¡CAMBIO! El límite es configurable vía query param.
     """
     try:
-        # ¡CAMBIO! Obtenemos el límite del query string, con 20 como default.
-        limit = request.args.get('limit', 20, type=int)
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        if page < 1 or not 1 <= per_page <= 100:
+            return jsonify({'error': 'page debe ser >= 1 y per_page debe estar entre 1 y 100'}), 400
 
         # ¡OPTIMIZACIÓN! Usamos un OUTERJOIN con Account para no fallar si una cuenta se borra.
-        transactions = db.session.query(
+        query = db.session.query(
             Transaction, 
             Account.name.label('account_name')
         ).outerjoin( # <--- LEFT JOIN
             Account, Transaction.account_id == Account.id
-        ).filter(
-            Transaction.user_id == current_user.id
-        ).order_by(
-            Transaction.date.desc()
-        ).limit(limit).all() # Usamos el límite dinámico
+        ).filter(Transaction.user_id == current_user.id)
+
+        if request.args.get('account_id'):
+            query = query.filter(Transaction.account_id == request.args.get('account_id', type=int))
+        if request.args.get('category'):
+            query = query.filter(Transaction.category == request.args['category'])
+        if request.args.get('type'):
+            try:
+                query = query.filter(Transaction.type == TransactionType(request.args['type']))
+            except ValueError:
+                return jsonify({'error': 'type no es válido'}), 400
+        try:
+            if request.args.get('date_from'):
+                query = query.filter(func.date(Transaction.date) >= date.fromisoformat(request.args['date_from']))
+            if request.args.get('date_to'):
+                query = query.filter(func.date(Transaction.date) <= date.fromisoformat(request.args['date_to']))
+        except ValueError:
+            return jsonify({'error': 'date_from y date_to deben tener formato YYYY-MM-DD'}), 400
+
+        total = query.count()
+        transactions = query.order_by(Transaction.date.desc()).offset((page - 1) * per_page).limit(per_page).all()
 
         result = []
         for t, account_name in transactions: # Desempaquetamos la tupla
@@ -163,7 +189,15 @@ def get_transactions(current_user):
                 "debt_id": t.debt_id
             })
 
-        return jsonify(result), 200
+        return jsonify({
+            'items': result,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total_items': total,
+                'total_pages': (total + per_page - 1) // per_page,
+            }
+        }), 200
 
     except Exception as e:
         import traceback
@@ -243,3 +277,70 @@ def get_current_balance(current_user):
 
     except Exception as e:
         return jsonify({"error": f"Error interno: {str(e)}"}), 500
+
+
+@transaction_bp.route('/<int:transaction_id>', methods=['PATCH'])
+@token_required
+def update_transaction(current_user, transaction_id):
+    transaction = Transaction.query.filter_by(id=transaction_id, user_id=current_user.id).first()
+    if not transaction:
+        return jsonify({'error': 'Transacción no encontrada'}), 404
+    data = request.get_json(silent=True) or {}
+    try:
+        if 'description' in data:
+            if not isinstance(data['description'], str) or not data['description'].strip():
+                return jsonify({'error': 'description no puede estar vacío'}), 400
+            transaction.description = data['description'].strip()
+        if 'type' in data:
+            transaction.type = TransactionType(data['type'])
+        if 'amount' in data:
+            amount = Decimal(str(data['amount']))
+            if transaction.type in (TransactionType.EXPENSE, TransactionType.DEBT_PAYMENT):
+                amount = -abs(amount)
+            else:
+                amount = abs(amount)
+            transaction.amount = amount
+        if 'category' in data:
+            transaction.category = data['category']
+        if 'installments' in data:
+            if not isinstance(data['installments'], int) or data['installments'] < 1:
+                return jsonify({'error': 'installments debe ser un entero mayor o igual a 1'}), 400
+            transaction.installments = data['installments']
+        if 'account_id' in data:
+            account = Account.query.filter_by(id=data['account_id'], user_id=current_user.id).first()
+            if not account:
+                return jsonify({'error': 'La cuenta no existe o no pertenece al usuario'}), 400
+            transaction.account_id = account.id
+        if 'debt_id' in data:
+            debt_id = data['debt_id']
+            if debt_id is not None and not Debt.query.filter_by(id=debt_id, user_id=current_user.id).first():
+                return jsonify({'error': 'La deuda no existe o no pertenece al usuario'}), 400
+            transaction.debt_id = debt_id
+        if 'date' in data:
+            transaction.date = datetime.fromisoformat(data['date'])
+        if 'type' in data and 'amount' not in data:
+            if transaction.type in (TransactionType.EXPENSE, TransactionType.DEBT_PAYMENT):
+                transaction.amount = -abs(transaction.amount)
+            else:
+                transaction.amount = abs(transaction.amount)
+        db.session.commit()
+        return jsonify({'message': 'Transacción actualizada exitosamente', 'transaction_id': transaction.id}), 200
+    except (ValueError, ArithmeticError):
+        db.session.rollback()
+        return jsonify({'error': 'Datos de transacción no válidos'}), 400
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'No se pudo actualizar la transacción'}), 500
+
+
+@transaction_bp.route('/<int:transaction_id>', methods=['DELETE'])
+@token_required
+def delete_transaction(current_user, transaction_id):
+    transaction = Transaction.query.filter_by(id=transaction_id, user_id=current_user.id).first()
+    if not transaction:
+        return jsonify({'error': 'Transacción no encontrada'}), 404
+    if transaction.recurring_execution:
+        return jsonify({'error': 'Es una ejecución de regla; desactiva o modifica la regla para conservar la consistencia.'}), 409
+    db.session.delete(transaction)
+    db.session.commit()
+    return jsonify({'message': 'Transacción eliminada exitosamente'}), 200
