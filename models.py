@@ -21,6 +21,9 @@ class AccountType(enum.Enum):
     CREDIT_CARD = 'credit_card'
     DEBIT_CARD = 'debit_card'
     CASH = 'cash'
+    # Compatibilidad con cuentas creadas por la versión anterior de la API.
+    # SQLAlchemy guarda el nombre SAVINGS en SQLite, por eso debe permanecer.
+    SAVINGS = 'savings'
 
 class TransactionType(enum.Enum):
     EXPENSE = 'expense'
