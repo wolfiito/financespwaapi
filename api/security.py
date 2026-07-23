@@ -13,6 +13,11 @@ def token_required(f):
     """
     @wraps(f)
     def decorated(*args, **kwargs):
+        # Las solicitudes OPTIONS son la comprobación CORS automática del
+        # navegador; no requieren JWT y deben responder antes del endpoint.
+        if request.method == 'OPTIONS':
+            return '', 204
+
         token = None
         
         # 1. Buscar el token en los headers de la petición

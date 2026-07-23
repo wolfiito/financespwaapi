@@ -14,7 +14,19 @@ from datetime import datetime
 basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
 
-CORS(app)
+# El frontend público vive en finanzas.tazcito.com. Declarar métodos y
+# encabezados evita que el navegador bloquee los PATCH/DELETE en el preflight.
+CORS(
+    app,
+    resources={r"/api/*": {"origins": [
+        "https://finanzas.tazcito.com",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]}},
+    methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "x-access-token"],
+    max_age=86400,
+)
 # --- FIN DE LA CORRECCIÓN ---
 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'finanzas.db')
