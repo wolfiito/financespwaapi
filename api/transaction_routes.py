@@ -339,8 +339,19 @@ def delete_transaction(current_user, transaction_id):
     transaction = Transaction.query.filter_by(id=transaction_id, user_id=current_user.id).first()
     if not transaction:
         return jsonify({'error': 'Transacción no encontrada'}), 404
-    if transaction.recurring_execution:
-        return jsonify({'error': 'Es una ejecución de regla; desactiva o modifica la regla para conservar la consistencia.'}), 409
-    db.session.delete(transaction)
-    db.session.commit()
-    return jsonify({'message': 'Transacción eliminada exitosamente'}), 200
+
+    try:
+        # Si el movimiento lo generó una regla, se borra también su registro de
+        # ejecución. La regla sigue viva y su calendario no retrocede, así que
+        # el proceso diario no vuelve a crear este movimiento.
+        execution = transaction.recurring_execution
+        if execution:
+            db.session.delete(execution)
+            db.session.flush()
+
+        db.session.delete(transaction)
+        db.session.commit()
+        return jsonify({'message': 'Transacción eliminada exitosamente'}), 200
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'No se pudo eliminar la transacción.'}), 500

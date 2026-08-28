@@ -2,7 +2,7 @@
 
 from flask import Blueprint, jsonify, request
 from app import db
-from models import Account, Transaction, AccountType, TransactionType
+from models import Account, Transaction, AccountType, TransactionType, RecurringRule
 from api.security import token_required
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
@@ -185,11 +185,32 @@ def delete_account(current_user, account_id):
     account = Account.query.filter_by(id=account_id, user_id=current_user.id).first()
     if not account:
         return jsonify({'error': 'Cuenta no encontrada'}), 404
-    if account.transactions or account.recurring_rules:
-        return jsonify({'error': 'La cuenta tiene movimientos o reglas; reasígnalos antes de eliminarla.'}), 409
-    db.session.delete(account)
-    db.session.commit()
-    return jsonify({'message': 'Cuenta eliminada exitosamente'}), 200
+
+    try:
+        # El historial no desaparece con la cuenta: los movimientos y las reglas
+        # se conservan y solo quedan sin cuenta asignada. Dejan de sumar en el
+        # saldo por cuenta, pero siguen en la bitácora y en los totales.
+        detached_transactions = Transaction.query.filter(
+            Transaction.account_id == account.id,
+            Transaction.user_id == current_user.id,
+        ).update({'account_id': None}, synchronize_session=False)
+        detached_rules = RecurringRule.query.filter(
+            RecurringRule.account_id == account.id,
+            RecurringRule.user_id == current_user.id,
+        ).update({'account_id': None}, synchronize_session=False)
+
+        # Las colecciones cargadas quedaron obsoletas tras el UPDATE masivo.
+        db.session.expire(account)
+        db.session.delete(account)
+        db.session.commit()
+        return jsonify({
+            'message': 'Cuenta eliminada exitosamente',
+            'detached_transactions': detached_transactions,
+            'detached_rules': detached_rules,
+        }), 200
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'No se pudo eliminar la cuenta.'}), 500
 
 
 def account_to_dict(account):

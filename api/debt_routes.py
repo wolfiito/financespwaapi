@@ -3,7 +3,7 @@
 from flask import Blueprint, jsonify, request
 from app import db
 # ¡CAMBIO! Importamos los modelos y TODOS los Enums que necesitamos
-from models import Debt, RecurringRule, RecurringRuleType, FrequencyType
+from models import Debt, RecurringRule, RecurringRuleType, FrequencyType, Transaction, RecurringExecution
 from datetime import date, datetime
 from api.security import token_required
 from decimal import Decimal
@@ -153,13 +153,35 @@ def delete_debt(current_user, debt_id):
     debt = Debt.query.filter_by(id=debt_id, user_id=current_user.id).first()
     if not debt:
         return jsonify({'error': 'Deuda no encontrada'}), 404
-    if debt.payments.count():
-        return jsonify({'error': 'La deuda tiene pagos registrados; no se puede eliminar.'}), 409
-    if debt.associated_rule:
-        db.session.delete(debt.associated_rule)
-    db.session.delete(debt)
-    db.session.commit()
-    return jsonify({'message': 'Deuda eliminada exitosamente'}), 200
+
+    try:
+        # Los pagos ya hechos siguen siendo movimientos reales: se conservan y
+        # solo pierden el vínculo con la deuda que deja de existir.
+        detached_payments = Transaction.query.filter(
+            Transaction.debt_id == debt.id,
+            Transaction.user_id == current_user.id,
+        ).update({'debt_id': None}, synchronize_session=False)
+
+        rule = debt.associated_rule
+        if rule:
+            # La regla de la deuda se va con ella; sus ejecuciones también, o
+            # quedarían apuntando a una regla inexistente.
+            RecurringExecution.query.filter(
+                RecurringExecution.rule_id == rule.id,
+            ).delete(synchronize_session=False)
+            db.session.flush()
+            db.session.delete(rule)
+
+        db.session.expire(debt)
+        db.session.delete(debt)
+        db.session.commit()
+        return jsonify({
+            'message': 'Deuda eliminada exitosamente',
+            'detached_payments': detached_payments,
+        }), 200
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'No se pudo eliminar la deuda.'}), 500
 
 
 def debt_to_dict(debt):
