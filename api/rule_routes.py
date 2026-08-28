@@ -5,7 +5,7 @@ from flask import Blueprint, jsonify, request
 
 from app import db
 from api.security import token_required
-from models import Account, RecurringRule, RecurringRuleType, FrequencyType
+from models import Account, RecurringRule, RecurringRuleType, FrequencyType, Transaction
 from services.recurring import process_due_rules
 
 
@@ -150,11 +150,39 @@ def delete_recurring_rule(current_user, rule_id):
     rule = RecurringRule.query.filter_by(id=rule_id, user_id=current_user.id).first()
     if not rule:
         return jsonify({'error': 'Regla no encontrada'}), 404
-    if rule.executions.count():
-        return jsonify({'error': 'La regla ya tiene ejecuciones; desactívala con PATCH en lugar de eliminarla.'}), 409
-    db.session.delete(rule)
-    db.session.commit()
-    return jsonify({'message': 'Regla eliminada exitosamente'}), 200
+
+    # Los movimientos que la regla ya generó son dinero que de verdad se movió,
+    # así que por omisión se conservan y solo desaparece el calendario.
+    # Con ?delete_transactions=true se borran también, para deshacer una regla
+    # creada por error junto con todo lo que alcanzó a registrar.
+    purge = request.args.get('delete_transactions', '').lower() in ('1', 'true', 'yes')
+
+    executions = rule.executions.all()
+    transaction_ids = [item.transaction_id for item in executions]
+
+    try:
+        for execution in executions:
+            db.session.delete(execution)
+        # El flush deja libres las transacciones antes de intentar borrarlas.
+        db.session.flush()
+
+        deleted_transactions = 0
+        if purge and transaction_ids:
+            deleted_transactions = Transaction.query.filter(
+                Transaction.id.in_(transaction_ids),
+                Transaction.user_id == current_user.id,
+            ).delete(synchronize_session=False)
+
+        db.session.delete(rule)
+        db.session.commit()
+        return jsonify({
+            'message': 'Regla eliminada exitosamente',
+            'deleted_executions': len(executions),
+            'deleted_transactions': deleted_transactions,
+        }), 200
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'No se pudo eliminar la regla.'}), 500
 
 
 @rule_bp.route('/', methods=['GET'])
