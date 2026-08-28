@@ -1,0 +1,25 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# --- Entornos virtuales ---
+venv/
+.venv/
+env/
+
+# --- Secretos ---
+.env
+.env.*
+
+# --- Base de datos local ---
+# La base de produccion vive en el servidor, no en el repo.
+*.db-journal
+*.db.respaldo*
+
+# --- Editores / SO ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+Thumbs.db
+.DS_Store

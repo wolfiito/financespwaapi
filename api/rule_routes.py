@@ -1,7 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 
 from app import db
 from api.security import token_required
@@ -98,6 +98,7 @@ def create_recurring_rule(current_user):
         return jsonify({'error': str(error)}), 400
     except Exception:
         db.session.rollback()
+        current_app.logger.exception('Fallo en create_recurring_rule')
         return jsonify({'error': 'No se pudo crear la regla.'}), 500
 
 
@@ -115,6 +116,7 @@ def process_rules_for_current_user(current_user):
         return jsonify({'created_transactions': created, 'processed_until': until.isoformat()}), 200
     except Exception:
         db.session.rollback()
+        current_app.logger.exception('Fallo en process_rules_for_current_user')
         return jsonify({'error': 'No se pudieron procesar las reglas.'}), 500
 
 
@@ -141,6 +143,7 @@ def update_recurring_rule(current_user, rule_id):
         return jsonify({'error': str(error)}), 400
     except Exception:
         db.session.rollback()
+        current_app.logger.exception('Fallo en update_recurring_rule')
         return jsonify({'error': 'No se pudo actualizar la regla.'}), 500
 
 
@@ -182,6 +185,7 @@ def delete_recurring_rule(current_user, rule_id):
         }), 200
     except Exception:
         db.session.rollback()
+        current_app.logger.exception('Fallo en delete_recurring_rule')
         return jsonify({'error': 'No se pudo eliminar la regla.'}), 500
 
 

@@ -1,6 +1,6 @@
 # En: api/auth_routes.py
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from app import db, bcrypt, app # Importamos 'app' para el SECRET_KEY
 from models import User
 import jwt # La librería PyJWT que instalamos
@@ -35,9 +35,10 @@ def register_user():
             "message": f"Usuario '{new_user.username}' creado exitosamente"
         }), 201 # 201 Created
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({"error": f"Error interno: {str(e)}"}), 400
+        current_app.logger.exception('Fallo en register_user')
+        return jsonify({'error': 'Error interno del servidor'}), 400
 
 @auth_bp.route('/login', methods=['POST'])
 def login_user():
@@ -80,5 +81,6 @@ def login_user():
             "token": token
         }), 200 # 200 OK
 
-    except Exception as e:
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+    except Exception:
+        current_app.logger.exception('Fallo en login_user')
+        return jsonify({'error': 'Error interno del servidor'}), 500

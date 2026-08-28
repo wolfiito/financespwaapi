@@ -1,6 +1,6 @@
 # En: api/account_routes.py
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from app import db
 from models import Account, Transaction, AccountType, TransactionType, RecurringRule
 from api.security import token_required
@@ -46,9 +46,10 @@ def create_account(current_user):
     except KeyError as e:
         db.session.rollback()
         return jsonify({"error": f"Dato faltante: {str(e)}"}), 400
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+        current_app.logger.exception('Fallo en create_account')
+        return jsonify({'error': 'Error interno del servidor'}), 500
 
 @account_bp.route('/summary', methods=['GET'])
 @token_required
@@ -91,9 +92,10 @@ def get_account_summary(current_user):
 
         return jsonify(summary_list), 200
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+        current_app.logger.exception('Fallo en get_account_summary')
+        return jsonify({'error': 'Error interno del servidor'}), 500
 
 @account_bp.route('/<int:account_id>/transactions', methods=['GET'])
 @token_required
@@ -143,8 +145,9 @@ def get_account_transactions(current_user, account_id):
             "transactions": result
         }), 200
 
-    except Exception as e:
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+    except Exception:
+        current_app.logger.exception('Fallo en get_account_transactions')
+        return jsonify({'error': 'Error interno del servidor'}), 500
 
 
 @account_bp.route('/<int:account_id>', methods=['PATCH'])
@@ -175,6 +178,7 @@ def update_account(current_user, account_id):
         return jsonify({'error': 'Tipo de cuenta no válido'}), 400
     except Exception:
         db.session.rollback()
+        current_app.logger.exception('Fallo en update_account')
         return jsonify({'error': 'No se pudo actualizar la cuenta'}), 500
 
 
@@ -210,6 +214,7 @@ def delete_account(current_user, account_id):
         }), 200
     except Exception:
         db.session.rollback()
+        current_app.logger.exception('Fallo en delete_account')
         return jsonify({'error': 'No se pudo eliminar la cuenta.'}), 500
 
 

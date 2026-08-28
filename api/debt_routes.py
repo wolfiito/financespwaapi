@@ -1,6 +1,6 @@
 # En: api/debt_routes.py
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from app import db
 # ¡CAMBIO! Importamos los modelos y TODOS los Enums que necesitamos
 from models import Debt, RecurringRule, RecurringRuleType, FrequencyType, Transaction, RecurringExecution
@@ -80,9 +80,10 @@ def create_debt(current_user):
         db.session.rollback()
         return jsonify({"error": f"Dato faltante: {str(e)}"}), 400
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+        current_app.logger.exception('Fallo en create_debt')
+        return jsonify({'error': 'Error interno del servidor'}), 500
 
 # --- 2. ENDPOINT 'GET ALL' (¡Nuevo!) ---
 @debt_bp.route('/', methods=['GET'])
@@ -110,8 +111,9 @@ def get_debts(current_user):
 
         return jsonify(result_list), 200
 
-    except Exception as e:
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+    except Exception:
+        current_app.logger.exception('Fallo en get_debts')
+        return jsonify({'error': 'Error interno del servidor'}), 500
 
 
 @debt_bp.route('/<int:debt_id>', methods=['PATCH'])
@@ -144,6 +146,7 @@ def update_debt(current_user, debt_id):
         return jsonify({'error': 'Los montos deben ser numéricos'}), 400
     except Exception:
         db.session.rollback()
+        current_app.logger.exception('Fallo en update_debt')
         return jsonify({'error': 'No se pudo actualizar la deuda'}), 500
 
 
@@ -181,6 +184,7 @@ def delete_debt(current_user, debt_id):
         }), 200
     except Exception:
         db.session.rollback()
+        current_app.logger.exception('Fallo en delete_debt')
         return jsonify({'error': 'No se pudo eliminar la deuda.'}), 500
 
 

@@ -1,6 +1,6 @@
 # En: api/summary_routes.py
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from app import db
 # ¡CAMBIO! Importamos TODOS los modelos y Enums necesarios
 from models import Transaction, Account, RecurringRule, AccountType, TransactionType, RecurringRuleType, FrequencyType
@@ -55,8 +55,9 @@ def get_category_summary(current_user):
         ]
         return jsonify(summary_data), 200
 
-    except Exception as e:
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+    except Exception:
+        current_app.logger.exception('Fallo en get_category_summary')
+        return jsonify({'error': 'Error interno del servidor'}), 500
 
 @summary_bp.route('/monthly_payments', methods=['GET'])
 @token_required
@@ -174,9 +175,10 @@ def get_monthly_payments(current_user):
 
         return jsonify(final_list), 200
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+        current_app.logger.exception('Fallo en get_monthly_payments')
+        return jsonify({'error': 'Error interno del servidor'}), 500
 
 # --- ¡HELPER CORREGIDO (BUG #1)! ---
 def rule_to_dict(rule):

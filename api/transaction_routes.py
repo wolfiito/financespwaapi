@@ -1,6 +1,6 @@
 # En: api/transaction_routes.py
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from app import db
 # ¡CAMBIO! Importamos TODOS los modelos y Enums que necesitamos
 from models import Transaction, Account, Debt, AccountType, TransactionType
@@ -121,9 +121,10 @@ def create_transaction(current_user):
     except KeyError as e:
         db.session.rollback()
         return jsonify({"error": f"Dato faltante: {str(e)}"}), 400
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+        current_app.logger.exception('Fallo en create_transaction')
+        return jsonify({'error': 'Error interno del servidor'}), 500
 
 # --- 3. ENDPOINT 'GET ALL' (Refactorizado y Optimizado) ---
 @transaction_bp.route('', methods=['GET'])
@@ -199,10 +200,11 @@ def get_transactions(current_user):
             }
         }), 200
 
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+        current_app.logger.exception('Fallo en get_transactions')
+        return jsonify({'error': 'Error interno del servidor'}), 500
 
 # --- 4. ENDPOINT 'SET INITIAL' (Refactorizado y No Destructivo) ---
 @transaction_bp.route('/set_initial', methods=['POST'])
@@ -245,9 +247,10 @@ def set_initial_balance(current_user):
             "account_id": main_account.id
         }), 201
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+        current_app.logger.exception('Fallo en set_initial_balance')
+        return jsonify({'error': 'Error interno del servidor'}), 500
 
 # --- 5. ENDPOINT 'GET BALANCE' (Corregido) ---
 @transaction_bp.route('/balance', methods=['GET'])
@@ -275,8 +278,9 @@ def get_current_balance(current_user):
             "user_id": current_user.id
         }), 200
 
-    except Exception as e:
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+    except Exception:
+        current_app.logger.exception('Fallo en get_current_balance')
+        return jsonify({'error': 'Error interno del servidor'}), 500
 
 
 @transaction_bp.route('/<int:transaction_id>', methods=['PATCH'])
@@ -330,6 +334,7 @@ def update_transaction(current_user, transaction_id):
         return jsonify({'error': 'Datos de transacción no válidos'}), 400
     except Exception:
         db.session.rollback()
+        current_app.logger.exception('Fallo en update_transaction')
         return jsonify({'error': 'No se pudo actualizar la transacción'}), 500
 
 
@@ -354,4 +359,5 @@ def delete_transaction(current_user, transaction_id):
         return jsonify({'message': 'Transacción eliminada exitosamente'}), 200
     except Exception:
         db.session.rollback()
+        current_app.logger.exception('Fallo en delete_transaction')
         return jsonify({'error': 'No se pudo eliminar la transacción.'}), 500
