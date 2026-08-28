@@ -49,7 +49,7 @@ def _parse_rule_values(data, current_user, rule=None):
     elif rule is None:
         values['end_date'] = None
 
-    start_date = values.get('start_date', rule.start_date)
+    start_date = values.get('start_date', rule.start_date if rule else None)
     end_date = values.get('end_date', rule.end_date if rule else None)
     if end_date and end_date < start_date:
         raise ValueError('end_date no puede ser anterior a start_date.')
