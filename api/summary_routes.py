@@ -159,13 +159,13 @@ def get_monthly_payments(current_user):
                 rules_list.append(payment_rule)
 
         # Ordenar la lista final por fecha
-        rules_list.sort(key=lambda x: x['next_execution_date'])
+        rules_list.sort(key=lambda x: to_date(x['next_execution_date']))
 
         # Formatear la respuesta final
         final_list = [
             {
                 # ¡CORREGIDO! Convertimos fecha a string
-                "date": r['next_execution_date'].isoformat(),
+                "date": to_date(r['next_execution_date']).isoformat(),
                 "description": r['description'],
                 "amount": str(r['amount'])
             }
@@ -199,6 +199,9 @@ def to_date(dt):
     Convierte un objeto datetime a date de forma segura.
     Si ya es un date, lo devuelve sin cambios.
     """
+    if isinstance(dt, str):
+        # Las reglas antiguas pueden traer la fecha ya serializada.
+        return datetime.fromisoformat(dt.replace('Z', '+00:00')).date()
     if isinstance(dt, datetime):
         return dt.date()
     return dt # Si ya es 'date', devuélvelo tal cual
